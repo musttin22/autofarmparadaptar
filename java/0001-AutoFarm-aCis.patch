@@ -1,0 +1,669 @@
+---
+ aCis_gameserver/config/autofarm.properties    | 92 +++++++++++++++++++
+ aCis_gameserver/java/net/sf/l2j/Config.java   | 61 ++++++++++++
+ .../net/sf/l2j/commons/data/Pagination.java   |  5 +
+ .../net/sf/l2j/gameserver/GameServer.java     |  4 +
+ .../net/sf/l2j/gameserver/enums/ZoneId.java   |  3 +-
+ .../usercommandhandlers/AutoFarmHandler.java  | 25 +++++
+ .../l2j/gameserver/idfactory/IdFactory.java   |  6 ++
+ .../sf/l2j/gameserver/model/WorldObject.java  |  6 ++
+ .../sf/l2j/gameserver/model/actor/Player.java |  5 +
+ .../model/actor/instance/Monster.java         |  6 ++
+ .../model/zone/form/ZoneCylinder.java         | 12 +--
+ .../gameserver/model/zone/form/ZoneNPoly.java |  4 +-
+ .../model/zone/type/subtype/ZoneType.java     |  3 +-
+ .../clientpackets/MoveBackwardToLocation.java | 15 +++
+ .../clientpackets/RequestBypassToServer.java  |  3 +
+ .../clientpackets/RequestGiveNickName.java    |  5 +
+ .../serverpackets/ExServerPrimitive.java      | 48 +++++-----
+ .../skills/l2skills/L2SkillCreateItem.java    |  4 +-
+ 18 files changed, 269 insertions(+), 38 deletions(-)
+ create mode 100644 aCis_gameserver/config/autofarm.properties
+ create mode 100644 aCis_gameserver/java/net/sf/l2j/gameserver/handler/usercommandhandlers/AutoFarmHandler.java
+
+diff --git a/aCis_gameserver/config/autofarm.properties b/aCis_gameserver/config/autofarm.properties
+new file mode 100644
+index 00000000..740f34e0
+--- /dev/null
++++ b/aCis_gameserver/config/autofarm.properties
+@@ -0,0 +1,92 @@
++# =================================================================
++#                          Auto Farm
++# =================================================================
++#
++# https://www.l2jbrasil.com/topic/148239-autofarm-com-editor-de-zonas-e-rotas/
++#
++
++# Ativar ou desativar o sistema
++ENABLED = True
++
++# Limites de tamanho
++# Insira 0 caso queria desativar
++
++# Tamanho máximo da área interna de uma zona
++# O valor padrão (7000000) é mais ou menos o tamanho da área interna do coliseum
++MAX_ZONE_AREA = 7000000
++
++# Tamanho máximo do perímetro (soma do comprimento das linhas da rota)
++# O valor padrão (10000) é mais ou menos o tamanho de uma volta completa na área interna do coliseum
++MAX_ROUTE_PERIMETER = 10000
++
++# Tamanho máximo do raio das zonas abertas
++# Insira 0 para sempre definir como o range de ataque do player
++# Não recomendo valores muito altos, testei com até 2000, que é o dobro do attack range do sagittarius
++# Um raio maior do que o range do player permitirá que ele se mova
++# O valor escolhido deve ser divisível por 100
++MAX_OPEN_RADIUS = 2000
++
++# Número máximo de zonas
++MAX_ZONES = 5
++
++# Número máximo de rotas
++MAX_ROUTES = 5
++
++# SOBRE OS NODES:
++# 20 é o valor máximo antes do HTML causar critical error no cliente por causa do seu tamanho. Essa limitação será resolvida em versões futuras
++
++# Número máximo de nodes (pontos) em areas do tipo ZONA
++MAX_ZONE_NODES = 15
++
++# Número máximo de nodes (pontos) em areas do tipo ROTA
++MAX_ROUTE_NODES = 20
++
++# Duração máxima (em minutos) que os usuários podem definir
++# Escolha um valor entre 1 e 999
++# Mantenha 0 caso não queira aplicar limites
++MAX_TIMER = 0
++
++# Porcentagem de HP para ativar o uso de potes ou skills de cura
++# Ex.: se estiver com 80% do life, o sistema tentará recuperar o HP
++HP_HEAL_RATE = 80
++
++# Porcentagem de MP para ativar o uso de potes ou skills de cura
++MP_HEAL_RATE = 80
++
++# Porcentagem de chance de ativação das skills de debuff
++DEBUFF_CHANCE = 30
++
++# 1539 - Greater Healing Potion x
++# 1540 - Quick Healing Potion
++# 1061 - Healing Potion
++# 1060 - Lesser Healing Potion x
++HP_POTIONS = 1060,1061,1539,1540
++
++# 726 - Mana Drug
++# 728 - Mana Potion
++MP_POTIONS = 726,728
++
++# Permitir dualbox
++ALLOW_DUALBOX = True
++
++# Impedir autofarm e criação de áreas dentro da cidade
++DISABLE_TOWN = True
++
++# Exibir range de ataque (círculo) em rotas
++# Não será exibido caso o range da arma for baixo, como dagger e dualfist, ou se o player definir um valor baixo
++SHOW_ROUTE_RANGE = True
++
++# Enviar mensagens para o player quando o sistema estiver ocioso
++# Essa situação acontece quando não existem monstros para matar ou não é possível atacar os existentes
++# Notificar o player pode ser útil para que ele não ache que o auto farm foi desativado
++SEND_LOG_MESSAGES = True
++
++# Alterar o título do player que estiver farmando
++CHANGE_PLAYER_TITLE = True
++
++# Alterar a cor do título e nome do player que estiver farmando
++CHANGE_PLAYER_NAME_COLOR = True
++
++# Cor do nome do player se a opção acima estiver ativa
++# Padrão FFFF77 (azul)
++PLAYER_NAME_COLOR = FFFF77
+diff --git a/aCis_gameserver/java/net/sf/l2j/Config.java b/aCis_gameserver/java/net/sf/l2j/Config.java
+index 3c19621d..ddf56538 100644
+--- a/aCis_gameserver/java/net/sf/l2j/Config.java
++++ b/aCis_gameserver/java/net/sf/l2j/Config.java
+@@ -39,6 +39,7 @@ public final class Config
+ 	private static final String PLAYERS_FILE = "./config/players.properties";
+ 	private static final String SERVER_FILE = "./config/server.properties";
+ 	private static final String SIEGE_FILE = "./config/siege.properties";
++	public static final String AUTOFARM_FILE = "./config/autofarm.properties";
+ 	
+ 	// --------------------------------------------------
+ 	// Clans settings
+@@ -487,6 +488,29 @@ public final class Config
+ 	public static boolean SERVER_NEWS;
+ 	public static int ZONE_TOWN;
+ 	
++	/** Auto Farm */
++	public static boolean AUTOFARM_ENABLED;
++	public static boolean AUTOFARM_ALLOW_DUALBOX;
++	public static boolean AUTOFARM_SEND_LOG_MESSAGES;
++	public static boolean AUTOFARM_CHANGE_PLAYER_TITLE;
++	public static boolean AUTOFARM_CHANGE_PLAYER_NAME_COLOR;
++	public static boolean AUTOFARM_DISABLE_TOWN;
++	public static boolean AUTOFARM_SHOW_ROUTE_RANGE;
++	public static double AUTOFARM_HP_HEAL_RATE;
++	public static double AUTOFARM_MP_HEAL_RATE;
++	public static int AUTOFARM_MAX_ZONE_AREA;
++	public static int AUTOFARM_MAX_ROUTE_PERIMITER;
++	public static int AUTOFARM_MAX_ZONES;
++	public static int AUTOFARM_MAX_ROUTES;
++	public static int AUTOFARM_MAX_ZONE_NODES;
++	public static int AUTOFARM_MAX_ROUTE_NODES;
++	public static int AUTOFARM_DEBUFF_CHANCE; 
++	public static int AUTOFARM_MAX_TIMER;
++	public static int AUTOFARM_MAX_OPEN_RADIUS;
++	public static int[] AUTOFARM_HP_POTIONS;
++	public static int[] AUTOFARM_MP_POTIONS;
++	public static String AUTOFARM_NAME_COLOR;
++	
+ 	// --------------------------------------------------
+ 	// Those "hidden" settings haven't configs to avoid admins to fuck their server
+ 	// You still can experiment changing values here. But don't say I didn't warn you.
+@@ -1055,6 +1079,33 @@ public final class Config
+ 		MAX_CONNECTION_PER_IP = server.getProperty("MaxConnectionPerIP", 50);
+ 	}
+ 	
++	public static final void loadAutoFarmManager()
++	{
++		final ExProperties farm = initProperties(AUTOFARM_FILE);
++		
++		AUTOFARM_ENABLED = farm.getProperty("ENABLED", false);
++		AUTOFARM_MAX_ZONE_AREA = farm.getProperty("MAX_ZONE_AREA", 7000000);
++		AUTOFARM_MAX_ROUTE_PERIMITER = farm.getProperty("MAX_ROUTE_PERIMETER", 7000000);
++		AUTOFARM_MAX_OPEN_RADIUS = farm.getProperty("MAX_OPEN_RADIUS", 0);
++		AUTOFARM_MAX_ZONES = farm.getProperty("MAX_ZONES", 5);
++		AUTOFARM_MAX_ROUTES = farm.getProperty("MAX_ROUTES", 5);
++		AUTOFARM_MAX_ZONE_NODES = farm.getProperty("MAX_ZONE_NODES", 15);
++		AUTOFARM_MAX_ROUTE_NODES = farm.getProperty("MAX_ROUTE_NODES", 30);
++		AUTOFARM_MAX_TIMER = farm.getProperty("MAX_TIMER", 0);
++		AUTOFARM_HP_HEAL_RATE = farm.getProperty("HP_HEAL_RATE", 80) / 100.;
++		AUTOFARM_MP_HEAL_RATE = farm.getProperty("MP_HEAL_RATE", 80) / 100.;
++		AUTOFARM_DEBUFF_CHANCE = farm.getProperty("DEBUFF_CHANCE", 30); 
++		AUTOFARM_HP_POTIONS = farm.getProperty("HP_POTIONS", new int[0]);
++		AUTOFARM_MP_POTIONS = farm.getProperty("MP_POTIONS", new int[0]);
++		AUTOFARM_ALLOW_DUALBOX = farm.getProperty("ALLOW_DUALBOX", true);
++		AUTOFARM_DISABLE_TOWN = farm.getProperty("DISABLE_TOWN", true);
++		AUTOFARM_SHOW_ROUTE_RANGE = farm.getProperty("SHOW_ROUTE_RANGE", true);
++		AUTOFARM_SEND_LOG_MESSAGES = farm.getProperty("SEND_LOG_MESSAGES", false);
++		AUTOFARM_CHANGE_PLAYER_TITLE = farm.getProperty("CHANGE_PLAYER_TITLE", false);
++		AUTOFARM_CHANGE_PLAYER_NAME_COLOR = farm.getProperty("CHANGE_PLAYER_NAME_COLOR", false);
++		AUTOFARM_NAME_COLOR = farm.getProperty("PLAYER_NAME_COLOR", "000000");
++	}
++	
+ 	public static final void loadGameServer()
+ 	{
+ 		LOGGER.info("Loading gameserver configuration files.");
+@@ -1082,6 +1133,8 @@ public final class Config
+ 		
+ 		// server settings
+ 		loadServer();
++		
++		loadAutoFarm();
+ 	}
+ 	
+ 	public static final void loadLoginServer()
+@@ -1108,6 +1161,14 @@ public final class Config
+ 		loadLogin();
+ 	}
+ 	
++	public static final void loadAutoFarm()
++	{
++		LOGGER.info("Loading auto farm configuration files.");
++		
++		// login settings
++		loadAutoFarmManager();
++	}
++	
+ 	public static final class ClassMasterSettings
+ 	{
+ 		private final Map<Integer, Boolean> _allowedClassChange;
+diff --git a/aCis_gameserver/java/net/sf/l2j/commons/data/Pagination.java b/aCis_gameserver/java/net/sf/l2j/commons/data/Pagination.java
+index ee56795f..aad5e6e1 100644
+--- a/aCis_gameserver/java/net/sf/l2j/commons/data/Pagination.java
++++ b/aCis_gameserver/java/net/sf/l2j/commons/data/Pagination.java
+@@ -133,4 +133,9 @@ public class Pagination<A> extends AbstractList<A>
+ 	{
+ 		return _list.size();
+ 	}
++	
++	public int getTotalEntries()
++	{
++		return _totalEntries;
++	}
+ }
+\ No newline at end of file
+diff --git a/aCis_gameserver/java/net/sf/l2j/gameserver/GameServer.java b/aCis_gameserver/java/net/sf/l2j/gameserver/GameServer.java
+index bf24b43b..270eeb9c 100644
+--- a/aCis_gameserver/java/net/sf/l2j/gameserver/GameServer.java
++++ b/aCis_gameserver/java/net/sf/l2j/gameserver/GameServer.java
+@@ -16,6 +16,8 @@ import net.sf.l2j.commons.pool.ThreadPool;
+ import net.sf.l2j.commons.util.SysUtil;
+ 
+ import net.sf.l2j.Config;
++import net.sf.l2j.gameserver.autofarm.AutoFarmManager;
++import net.sf.l2j.gameserver.autofarm.AutoFarmTask;
+ import net.sf.l2j.gameserver.communitybbs.CommunityBoard;
+ import net.sf.l2j.gameserver.data.SkillTable;
+ import net.sf.l2j.gameserver.data.cache.CrestCache;
+@@ -215,6 +217,7 @@ public class GameServer
+ 		WaterTaskManager.getInstance();
+ 		InventoryUpdateTaskManager.getInstance();
+ 		ItemInstanceTaskManager.getInstance();
++		AutoFarmTask.getInstance();
+ 		
+ 		StringUtil.printSection("Seven Signs");
+ 		SevenSignsManager.getInstance();
+@@ -244,6 +247,7 @@ public class GameServer
+ 		
+ 		StringUtil.printSection("Quests & Scripts");
+ 		ScriptData.getInstance();
++		AutoFarmManager.getInstance();
+ 		
+ 		if (Config.ALLOW_BOAT)
+ 			BoatData.getInstance().load();
+diff --git a/aCis_gameserver/java/net/sf/l2j/gameserver/enums/ZoneId.java b/aCis_gameserver/java/net/sf/l2j/gameserver/enums/ZoneId.java
+index e3813366..01852a7c 100644
+--- a/aCis_gameserver/java/net/sf/l2j/gameserver/enums/ZoneId.java
++++ b/aCis_gameserver/java/net/sf/l2j/gameserver/enums/ZoneId.java
+@@ -21,7 +21,8 @@ public enum ZoneId
+ 	CAST_ON_ARTIFACT(16),
+ 	NO_RESTART(17),
+ 	SCRIPT(18),
+-	BOSS(19);
++	BOSS(19),
++	AUTO_FARM(20);
+ 	
+ 	private final int _id;
+ 	
+diff --git a/aCis_gameserver/java/net/sf/l2j/gameserver/handler/usercommandhandlers/AutoFarmHandler.java b/aCis_gameserver/java/net/sf/l2j/gameserver/handler/usercommandhandlers/AutoFarmHandler.java
+new file mode 100644
+index 00000000..d94e4753
+--- /dev/null
++++ b/aCis_gameserver/java/net/sf/l2j/gameserver/handler/usercommandhandlers/AutoFarmHandler.java
+@@ -0,0 +1,25 @@
++package net.sf.l2j.gameserver.handler.usercommandhandlers;
++
++import net.sf.l2j.gameserver.autofarm.AutoFarmManager;
++import net.sf.l2j.gameserver.handler.IUserCommandHandler;
++import net.sf.l2j.gameserver.model.actor.Player;
++
++public class AutoFarmHandler implements IUserCommandHandler
++{
++	private static final int[] COMMAND_IDS =
++	{
++		201
++	};
++	
++	@Override
++	public void useUserCommand(int id, Player player)
++	{
++		AutoFarmManager.getInstance().showIndexWindow(player);
++	}
++	
++	@Override
++	public int[] getUserCommandList()
++	{
++		return COMMAND_IDS;
++	}
++}
+\ No newline at end of file
+diff --git a/aCis_gameserver/java/net/sf/l2j/gameserver/idfactory/IdFactory.java b/aCis_gameserver/java/net/sf/l2j/gameserver/idfactory/IdFactory.java
+index 45242ce7..5358a486 100644
+--- a/aCis_gameserver/java/net/sf/l2j/gameserver/idfactory/IdFactory.java
++++ b/aCis_gameserver/java/net/sf/l2j/gameserver/idfactory/IdFactory.java
+@@ -101,6 +101,12 @@ public class IdFactory
+ 					while (rs.next())
+ 						usedObjectIds.add(rs.getInt(1));
+ 				}
++				
++				try (ResultSet rs = st.executeQuery("SELECT area_id FROM autofarm_areas"))
++				{
++					while (rs.next())
++						usedObjectIds.add(rs.getInt(1));
++				}
+ 			}
+ 		}
+ 		catch (Exception e)
+diff --git a/aCis_gameserver/java/net/sf/l2j/gameserver/model/WorldObject.java b/aCis_gameserver/java/net/sf/l2j/gameserver/model/WorldObject.java
+index 3a979cd9..2ddaabf2 100644
+--- a/aCis_gameserver/java/net/sf/l2j/gameserver/model/WorldObject.java
++++ b/aCis_gameserver/java/net/sf/l2j/gameserver/model/WorldObject.java
+@@ -16,6 +16,7 @@ import net.sf.l2j.gameserver.idfactory.IdFactory;
+ import net.sf.l2j.gameserver.model.actor.Creature;
+ import net.sf.l2j.gameserver.model.actor.Playable;
+ import net.sf.l2j.gameserver.model.actor.Player;
++import net.sf.l2j.gameserver.model.actor.instance.Monster;
+ import net.sf.l2j.gameserver.model.boat.BoatItinerary;
+ import net.sf.l2j.gameserver.model.location.Location;
+ import net.sf.l2j.gameserver.model.location.SpawnLocation;
+@@ -836,4 +837,9 @@ public abstract class WorldObject
+ 	{
+ 		
+ 	}
++	
++	public Monster getMonster()
++	{
++		return null;
++	}
+ }
+\ No newline at end of file
+diff --git a/aCis_gameserver/java/net/sf/l2j/gameserver/model/actor/Player.java b/aCis_gameserver/java/net/sf/l2j/gameserver/model/actor/Player.java
+index f5a1be5f..93b0adbb 100644
+--- a/aCis_gameserver/java/net/sf/l2j/gameserver/model/actor/Player.java
++++ b/aCis_gameserver/java/net/sf/l2j/gameserver/model/actor/Player.java
+@@ -28,6 +28,7 @@ import net.sf.l2j.commons.util.ArraysUtil;
+ 
+ import net.sf.l2j.Config;
+ import net.sf.l2j.gameserver.LoginServerThread;
++import net.sf.l2j.gameserver.autofarm.AutoFarmManager;
+ import net.sf.l2j.gameserver.communitybbs.CommunityBoard;
+ import net.sf.l2j.gameserver.communitybbs.model.Forum;
+ import net.sf.l2j.gameserver.data.SkillTable;
+@@ -5982,6 +5983,7 @@ public final class Player extends Playable
+ 		revalidateZone(true);
+ 		
+ 		RelationManager.getInstance().notifyFriends(this, true);
++		AutoFarmManager.getInstance().onPlayerLogin(this);
+ 	}
+ 	
+ 	public long getLastAccess()
+@@ -6378,6 +6380,9 @@ public final class Player extends Playable
+ 			// friends & blocklist update
+ 			RelationManager.getInstance().notifyFriends(this, false);
+ 			
++			// Auto Farm
++			AutoFarmManager.getInstance().stopPlayer(this, null);
++			
+ 			World.getInstance().removePlayer(this); // force remove in case of crash during teleport
+ 		}
+ 		catch (Exception e)
+diff --git a/aCis_gameserver/java/net/sf/l2j/gameserver/model/actor/instance/Monster.java b/aCis_gameserver/java/net/sf/l2j/gameserver/model/actor/instance/Monster.java
+index ca3e6332..97b211ca 100644
+--- a/aCis_gameserver/java/net/sf/l2j/gameserver/model/actor/instance/Monster.java
++++ b/aCis_gameserver/java/net/sf/l2j/gameserver/model/actor/instance/Monster.java
+@@ -564,4 +564,10 @@ public class Monster extends Attackable
+ 		// Broadcast message.
+ 		broadcastOnScreen(10000, BossInfoType.getBossInfo(getNpcId()).getCcNoRightsMsg());
+ 	}
++	
++	@Override
++	public Monster getMonster()
++	{
++		return this;
++	}
+ }
+\ No newline at end of file
+diff --git a/aCis_gameserver/java/net/sf/l2j/gameserver/model/zone/form/ZoneCylinder.java b/aCis_gameserver/java/net/sf/l2j/gameserver/model/zone/form/ZoneCylinder.java
+index 48c3b682..57309ed4 100644
+--- a/aCis_gameserver/java/net/sf/l2j/gameserver/model/zone/form/ZoneCylinder.java
++++ b/aCis_gameserver/java/net/sf/l2j/gameserver/model/zone/form/ZoneCylinder.java
+@@ -9,12 +9,12 @@ public class ZoneCylinder extends ZoneForm
+ {
+ 	protected static final int STEP = 50;
+ 	
+-	private final int _x;
+-	private final int _y;
+-	private final int _z1;
+-	private final int _z2;
+-	private final int _rad;
+-	private final int _radS;
++	protected final int _x;
++	protected final int _y;
++	protected final int _z1;
++	protected final int _z2;
++	protected final int _rad;
++	protected final int _radS;
+ 	
+ 	public ZoneCylinder(int x, int y, int z1, int z2, int rad)
+ 	{
+diff --git a/aCis_gameserver/java/net/sf/l2j/gameserver/model/zone/form/ZoneNPoly.java b/aCis_gameserver/java/net/sf/l2j/gameserver/model/zone/form/ZoneNPoly.java
+index 7caa94b6..1af57446 100644
+--- a/aCis_gameserver/java/net/sf/l2j/gameserver/model/zone/form/ZoneNPoly.java
++++ b/aCis_gameserver/java/net/sf/l2j/gameserver/model/zone/form/ZoneNPoly.java
+@@ -7,8 +7,8 @@ import net.sf.l2j.gameserver.network.serverpackets.ExServerPrimitive;
+ 
+ public class ZoneNPoly extends ZoneForm
+ {
+-	private final int[] _x;
+-	private final int[] _y;
++	protected final int[] _x;
++	protected final int[] _y;
+ 	private final int _z1;
+ 	private final int _z2;
+ 	
+diff --git a/aCis_gameserver/java/net/sf/l2j/gameserver/model/zone/type/subtype/ZoneType.java b/aCis_gameserver/java/net/sf/l2j/gameserver/model/zone/type/subtype/ZoneType.java
+index de021737..e2a45dc2 100644
+--- a/aCis_gameserver/java/net/sf/l2j/gameserver/model/zone/type/subtype/ZoneType.java
++++ b/aCis_gameserver/java/net/sf/l2j/gameserver/model/zone/type/subtype/ZoneType.java
+@@ -11,6 +11,7 @@ import java.util.function.Predicate;
+ 
+ import net.sf.l2j.commons.logging.CLogger;
+ 
++import net.sf.l2j.gameserver.autofarm.zone.AutoFarmArea;
+ import net.sf.l2j.gameserver.enums.EventHandler;
+ import net.sf.l2j.gameserver.model.WorldObject;
+ import net.sf.l2j.gameserver.model.actor.Creature;
+@@ -64,7 +65,7 @@ public abstract class ZoneType
+ 	
+ 	public void setZone(ZoneForm zone)
+ 	{
+-		if (_zone != null)
++		if (_zone != null && !(this instanceof AutoFarmArea))
+ 			throw new IllegalStateException("Zone already set");
+ 		
+ 		_zone = zone;
+diff --git a/aCis_gameserver/java/net/sf/l2j/gameserver/network/clientpackets/MoveBackwardToLocation.java b/aCis_gameserver/java/net/sf/l2j/gameserver/network/clientpackets/MoveBackwardToLocation.java
+index a8054cd0..e1c8e538 100644
+--- a/aCis_gameserver/java/net/sf/l2j/gameserver/network/clientpackets/MoveBackwardToLocation.java
++++ b/aCis_gameserver/java/net/sf/l2j/gameserver/network/clientpackets/MoveBackwardToLocation.java
+@@ -5,6 +5,7 @@ import java.nio.BufferUnderflowException;
+ import net.sf.l2j.commons.math.MathUtil;
+ 
+ import net.sf.l2j.Config;
++import net.sf.l2j.gameserver.autofarm.AutoFarmManager;
+ import net.sf.l2j.gameserver.enums.TeleportMode;
+ import net.sf.l2j.gameserver.enums.boats.BoatDock;
+ import net.sf.l2j.gameserver.model.actor.Boat;
+@@ -113,6 +114,20 @@ public class MoveBackwardToLocation extends L2GameClientPacket
+ 			return;
+ 		}
+ 		
++		if (AutoFarmManager.getInstance().isPlayerAddingLoc(player.getObjectId()))
++		{
++			AutoFarmManager.getInstance().addAreaNode(player, targetLoc);
++			player.sendPacket(ActionFailed.STATIC_PACKET);
++			return;
++		}
++		
++		if (AutoFarmManager.getInstance().isRouteFarmActive(player.getObjectId()))
++		{
++			player.sendMessage("Movimento desativado pelo AutoFarm.");
++			player.sendPacket(ActionFailed.STATIC_PACKET);
++			return;
++		}
++		
+ 		final boolean isInBoat = info.isInBoat();
+ 		
+ 		// If out of Boat, register a move Intention.
+diff --git a/aCis_gameserver/java/net/sf/l2j/gameserver/network/clientpackets/RequestBypassToServer.java b/aCis_gameserver/java/net/sf/l2j/gameserver/network/clientpackets/RequestBypassToServer.java
+index fc67a540..7f066887 100644
+--- a/aCis_gameserver/java/net/sf/l2j/gameserver/network/clientpackets/RequestBypassToServer.java
++++ b/aCis_gameserver/java/net/sf/l2j/gameserver/network/clientpackets/RequestBypassToServer.java
+@@ -4,6 +4,7 @@ import java.util.StringTokenizer;
+ import java.util.logging.Logger;
+ 
+ import net.sf.l2j.Config;
++import net.sf.l2j.gameserver.autofarm.AutoFarmManager;
+ import net.sf.l2j.gameserver.communitybbs.CommunityBoard;
+ import net.sf.l2j.gameserver.data.manager.HeroManager;
+ import net.sf.l2j.gameserver.data.xml.AdminData;
+@@ -182,5 +183,7 @@ public final class RequestBypassToServer extends L2GameClientPacket
+ 			final int arenaId = Integer.parseInt(_command.substring(12).trim());
+ 			player.enterOlympiadObserverMode(arenaId);
+ 		}
++		else if (_command.startsWith("autofarm"))
++			AutoFarmManager.getInstance().handleBypass(player, _command.substring(9));
+ 	}
+ }
+\ No newline at end of file
+diff --git a/aCis_gameserver/java/net/sf/l2j/gameserver/network/clientpackets/RequestGiveNickName.java b/aCis_gameserver/java/net/sf/l2j/gameserver/network/clientpackets/RequestGiveNickName.java
+index 349108f5..e8278b58 100644
+--- a/aCis_gameserver/java/net/sf/l2j/gameserver/network/clientpackets/RequestGiveNickName.java
++++ b/aCis_gameserver/java/net/sf/l2j/gameserver/network/clientpackets/RequestGiveNickName.java
+@@ -2,6 +2,8 @@ package net.sf.l2j.gameserver.network.clientpackets;
+ 
+ import net.sf.l2j.commons.lang.StringUtil;
+ 
++import net.sf.l2j.Config;
++import net.sf.l2j.gameserver.autofarm.AutoFarmManager;
+ import net.sf.l2j.gameserver.enums.PrivilegeType;
+ import net.sf.l2j.gameserver.model.actor.Player;
+ import net.sf.l2j.gameserver.model.pledge.ClanMember;
+@@ -33,6 +35,9 @@ public class RequestGiveNickName extends L2GameClientPacket
+ 			return;
+ 		}
+ 		
++		if (Config.AUTOFARM_CHANGE_PLAYER_TITLE && AutoFarmManager.getInstance().isPlayerActive(player.getObjectId()))
++			return;
++		
+ 		// Noblesse can bestow a title to themselves
+ 		if (player.isNoble() && _name.matches(player.getName()))
+ 		{
+diff --git a/aCis_gameserver/java/net/sf/l2j/gameserver/network/serverpackets/ExServerPrimitive.java b/aCis_gameserver/java/net/sf/l2j/gameserver/network/serverpackets/ExServerPrimitive.java
+index b327e83e..b1c17b41 100644
+--- a/aCis_gameserver/java/net/sf/l2j/gameserver/network/serverpackets/ExServerPrimitive.java
++++ b/aCis_gameserver/java/net/sf/l2j/gameserver/network/serverpackets/ExServerPrimitive.java
+@@ -2,6 +2,7 @@ package net.sf.l2j.gameserver.network.serverpackets;
+ 
+ import java.awt.Color;
+ import java.util.List;
++import java.util.Map;
+ import java.util.Set;
+ import java.util.concurrent.ConcurrentHashMap;
+ 
+@@ -21,7 +22,7 @@ public class ExServerPrimitive extends L2GameServerPacket
+ {
+ 	private static final int MAX_SIZE = 16000;
+ 	
+-	private final Set<Point> _points = ConcurrentHashMap.newKeySet();
++	private final Map<Integer, Point> _points = new ConcurrentHashMap<>();
+ 	private final Set<Line> _lines = ConcurrentHashMap.newKeySet();
+ 	
+ 	private final String _name;
+@@ -82,7 +83,7 @@ public class ExServerPrimitive extends L2GameServerPacket
+ 		if (_size < MAX_SIZE || _index < 0)
+ 		{
+ 			_size += point.size();
+-			_points.add(point);
++			_points.put(_points.size() + 1, point);
+ 			return;
+ 		}
+ 		
+@@ -420,7 +421,7 @@ public class ExServerPrimitive extends L2GameServerPacket
+ 	 */
+ 	public void addAll(ExServerPrimitive esp)
+ 	{
+-		for (Point p : esp._points)
++		for (Point p : esp._points.values())
+ 			addPoint(p);
+ 		for (Line l : esp._lines)
+ 			addLine(l);
+@@ -471,6 +472,20 @@ public class ExServerPrimitive extends L2GameServerPacket
+ 			_next.sendTo(player);
+ 	}
+ 	
++	public Map<Integer, Point> getPoints()
++	{
++		// Esse dummy � adicionado pelo ExServerPrimitive::reset
++		if (_points.get(1) != null && _points.get(1).getZ() == 16384)
++			_points.remove(1);
++		
++		return _points;
++	}
++	
++	public Set<Line> getLines()
++	{
++		return _lines;
++	}
++	
+ 	@Override
+ 	protected void writeImpl()
+ 	{
+@@ -488,7 +503,7 @@ public class ExServerPrimitive extends L2GameServerPacket
+ 		
+ 		writeD(_points.size() + _lines.size());
+ 		
+-		for (Point point : _points)
++		for (Point point : _points.values())
+ 		{
+ 			writeC(1); // Its the type in this case Point
+ 			writeS(point.getName());
+@@ -520,23 +535,19 @@ public class ExServerPrimitive extends L2GameServerPacket
+ 		}
+ 	}
+ 	
+-	private static class Point
++	public static class Point extends Location
+ 	{
+ 		protected final String _name;
+ 		private final int _color;
+ 		private final boolean _isNameColored;
+-		private final int _x;
+-		private final int _y;
+-		private final int _z;
+ 		
+ 		public Point(String name, Color color, boolean isNameColored, int x, int y, int z)
+ 		{
++			super(x, y, z);
++			
+ 			_name = name;
+ 			_color = color.getRGB();
+ 			_isNameColored = isNameColored;
+-			_x = x;
+-			_y = y;
+-			_z = z;
+ 		}
+ 		
+ 		public String getName()
+@@ -554,21 +565,6 @@ public class ExServerPrimitive extends L2GameServerPacket
+ 			return _isNameColored;
+ 		}
+ 		
+-		public int getX()
+-		{
+-			return _x;
+-		}
+-		
+-		public int getY()
+-		{
+-			return _y;
+-		}
+-		
+-		public int getZ()
+-		{
+-			return _z;
+-		}
+-		
+ 		public int size()
+ 		{
+ 			// 1 byte, string (2 bytes per character + 2 termination bytes), 7 integers (4 bytes)
+diff --git a/aCis_gameserver/java/net/sf/l2j/gameserver/skills/l2skills/L2SkillCreateItem.java b/aCis_gameserver/java/net/sf/l2j/gameserver/skills/l2skills/L2SkillCreateItem.java
+index c0826ac9..4df21749 100644
+--- a/aCis_gameserver/java/net/sf/l2j/gameserver/skills/l2skills/L2SkillCreateItem.java
++++ b/aCis_gameserver/java/net/sf/l2j/gameserver/skills/l2skills/L2SkillCreateItem.java
+@@ -12,8 +12,8 @@ import net.sf.l2j.gameserver.skills.L2Skill;
+ 
+ public class L2SkillCreateItem extends L2Skill
+ {
+-	private final int[] _createItemId;
+-	private final int _createItemCount;
++	public final int[] _createItemId;
++	public final int _createItemCount;
+ 	private final int _randomCount;
+ 	
+ 	public L2SkillCreateItem(StatSet set)
+-- 
+2.46.1
+
